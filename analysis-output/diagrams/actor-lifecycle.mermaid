@@ -1,0 +1,27 @@
+%% Ray Actor Lifecycle State Machine
+%% Commit: d1cce8c9dc8411fad7cfbd619350bec6f19839a3
+
+stateDiagram-v2
+    [*] --> DEPENDENCIES_UNREADY: Actor created
+
+    DEPENDENCIES_UNREADY --> PENDING_CREATION: Dependencies ready
+
+    PENDING_CREATION --> ALIVE: Worker started,<br/>__init__ complete
+
+    ALIVE --> RESTARTING: Actor crashed<br/>(if max_restarts > 0)
+    ALIVE --> DEAD: Actor killed or<br/>max_restarts exceeded
+
+    RESTARTING --> ALIVE: Restart successful
+    RESTARTING --> DEAD: Restart failed or<br/>max_restarts exceeded
+
+    DEAD --> [*]
+
+    note right of ALIVE
+        Actor is ready to
+        receive method calls
+    end note
+
+    note right of RESTARTING
+        State is lost unless
+        checkpointed
+    end note

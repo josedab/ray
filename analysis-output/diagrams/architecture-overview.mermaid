@@ -1,0 +1,52 @@
+%% Ray Architecture Overview
+%% Commit: d1cce8c9dc8411fad7cfbd619350bec6f19839a3
+
+graph TB
+    subgraph "User Application"
+        A[Python Code<br/>@ray.remote]
+    end
+
+    subgraph "Python API Layer"
+        B[ray.init / ray.get / ray.put]
+        C[RemoteFunction / ActorClass]
+    end
+
+    subgraph "Binding Layer"
+        D[Cython Bindings<br/>_raylet.pyx]
+    end
+
+    subgraph "C++ Core"
+        E[CoreWorker]
+        F[Task Manager]
+        G[Reference Counter]
+        H[Object Manager]
+    end
+
+    subgraph "Distributed Services"
+        I[GCS<br/>Global Control Store]
+        J[Raylet<br/>Node Manager]
+        K[Plasma<br/>Object Store]
+    end
+
+    subgraph "Storage"
+        L[(Redis)]
+        M[(Shared Memory)]
+    end
+
+    A --> B
+    B --> C
+    C --> D
+    D --> E
+    E --> F
+    E --> G
+    E --> H
+    E <--> I
+    E <--> J
+    H <--> K
+    I <--> L
+    K <--> M
+
+    style A fill:#e1f5fe
+    style I fill:#fff3e0
+    style J fill:#f3e5f5
+    style K fill:#e8f5e9

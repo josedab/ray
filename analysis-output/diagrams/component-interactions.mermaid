@@ -1,0 +1,51 @@
+%% Ray Component Interactions
+%% Commit: d1cce8c9dc8411fad7cfbd619350bec6f19839a3
+
+graph LR
+    subgraph "Head Node"
+        GCS[GCS Server]
+        Redis[(Redis)]
+        Dashboard[Dashboard]
+    end
+
+    subgraph "Worker Node 1"
+        R1[Raylet]
+        P1[Plasma Store]
+        W1a[Worker]
+        W1b[Worker]
+    end
+
+    subgraph "Worker Node 2"
+        R2[Raylet]
+        P2[Plasma Store]
+        W2a[Worker]
+        W2b[Worker]
+    end
+
+    %% GCS connections
+    GCS <--> Redis
+    GCS <--> Dashboard
+    R1 <-->|gRPC| GCS
+    R2 <-->|gRPC| GCS
+
+    %% Raylet to workers
+    R1 --- W1a
+    R1 --- W1b
+    R2 --- W2a
+    R2 --- W2b
+
+    %% Plasma connections
+    W1a <-->|Shared Memory| P1
+    W1b <-->|Shared Memory| P1
+    W2a <-->|Shared Memory| P2
+    W2b <-->|Shared Memory| P2
+
+    %% Inter-node communication
+    R1 <-->|gRPC| R2
+    P1 <-->|Object Transfer| P2
+
+    style GCS fill:#fff3e0
+    style R1 fill:#f3e5f5
+    style R2 fill:#f3e5f5
+    style P1 fill:#e8f5e9
+    style P2 fill:#e8f5e9

@@ -1,0 +1,40 @@
+%% Ray Task Data Flow
+%% Commit: d1cce8c9dc8411fad7cfbd619350bec6f19839a3
+
+sequenceDiagram
+    participant User as User Code
+    participant API as Python API
+    participant CW as CoreWorker
+    participant Raylet as Raylet
+    participant GCS as GCS
+    participant Worker as Worker Process
+    participant Plasma as Object Store
+
+    %% Task Submission
+    User->>API: @ray.remote def task()
+    User->>API: task.remote(args)
+    API->>API: Serialize function + args
+    API->>CW: Submit task
+    CW->>Raylet: Request worker lease
+    Raylet->>GCS: Check resources
+
+    %% Scheduling
+    GCS-->>Raylet: Resource info
+    Raylet->>Raylet: Schedule task
+    Raylet-->>CW: Worker lease granted
+
+    %% Execution
+    CW->>Worker: Send task spec
+    Worker->>Plasma: Get dependencies
+    Plasma-->>Worker: Serialized data
+    Worker->>Worker: Execute function
+    Worker->>Plasma: Store result
+    Worker-->>CW: Task complete
+
+    %% Result Retrieval
+    User->>API: ray.get(ref)
+    API->>CW: Get object
+    CW->>Plasma: Fetch object
+    Plasma-->>CW: Serialized result
+    CW->>API: Deserialize
+    API-->>User: Python object

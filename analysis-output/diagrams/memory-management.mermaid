@@ -1,0 +1,40 @@
+%% Ray Memory Management Flow
+%% Commit: d1cce8c9dc8411fad7cfbd619350bec6f19839a3
+
+graph TB
+    subgraph "Memory Zones"
+        A[Available Memory]
+        B[Used Memory]
+        C[Spillable Objects]
+        D[Pinned Objects]
+    end
+
+    subgraph "Thresholds"
+        T1[70% - GC Trigger]
+        T2[80% - Eviction Start]
+        T3[95% - OOM]
+    end
+
+    subgraph "Actions"
+        E[Garbage Collection]
+        F[LRU Eviction]
+        G[Disk Spilling]
+        H[Task Rejection]
+    end
+
+    B -->|exceeds| T1
+    T1 -->|triggers| E
+
+    B -->|exceeds| T2
+    T2 -->|triggers| F
+    F -->|if enabled| G
+
+    B -->|exceeds| T3
+    T3 -->|triggers| H
+
+    C -->|candidate for| F
+    D -->|protected from| F
+
+    style T1 fill:#fff9c4
+    style T2 fill:#ffcc80
+    style T3 fill:#ef9a9a
