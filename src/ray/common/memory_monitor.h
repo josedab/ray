@@ -22,6 +22,44 @@
 
 namespace ray {
 
+/// Memory pressure levels for proactive memory management.
+/// These levels determine the actions taken to manage memory pressure.
+enum class MemoryPressureLevel {
+  NORMAL,    // < 60% - Normal operation
+  ELEVATED,  // 60-75% - Start proactive measures
+  HIGH,      // 75-90% - Aggressive measures
+  CRITICAL   // > 90% - Emergency measures
+};
+
+/// Returns the string representation of the memory pressure level.
+inline const char* MemoryPressureLevelToString(MemoryPressureLevel level) {
+  switch (level) {
+    case MemoryPressureLevel::NORMAL:
+      return "NORMAL";
+    case MemoryPressureLevel::ELEVATED:
+      return "ELEVATED";
+    case MemoryPressureLevel::HIGH:
+      return "HIGH";
+    case MemoryPressureLevel::CRITICAL:
+      return "CRITICAL";
+    default:
+      return "UNKNOWN";
+  }
+}
+
+/// Classifies memory usage ratio into a pressure level.
+inline MemoryPressureLevel ClassifyMemoryPressure(float usage_ratio) {
+  if (usage_ratio >= 0.90f) {
+    return MemoryPressureLevel::CRITICAL;
+  } else if (usage_ratio >= 0.75f) {
+    return MemoryPressureLevel::HIGH;
+  } else if (usage_ratio >= 0.60f) {
+    return MemoryPressureLevel::ELEVATED;
+  } else {
+    return MemoryPressureLevel::NORMAL;
+  }
+}
+
 /// A snapshot of memory information.
 struct MemorySnapshot {
   /// The memory used.
@@ -32,6 +70,15 @@ struct MemorySnapshot {
 
   /// The per-process memory used;
   absl::flat_hash_map<pid_t, int64_t> process_used_bytes;
+
+  /// The current memory pressure level.
+  MemoryPressureLevel pressure_level;
+
+  /// Get the usage ratio as a float between 0 and 1.
+  float GetUsageRatio() const {
+    if (total_bytes == 0) return 0.0f;
+    return static_cast<float>(used_bytes) / static_cast<float>(total_bytes);
+  }
 
   friend std::ostream &operator<<(std::ostream &os,
                                   const MemorySnapshot &memory_snapshot);

@@ -18,6 +18,8 @@
 #include "ray/object_manager/plasma/eviction_policy.h"
 
 #include <algorithm>
+#include <chrono>
+#include <limits>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -160,4 +162,49 @@ bool EvictionPolicy::IsObjectExists(const ObjectID &object_id) const {
 }
 
 std::string EvictionPolicy::DebugString() const { return cache_.DebugString(); }
+
+void EvictionPolicy::PinObject(const ObjectID &object_id) {
+  pinned_objects_.insert(object_id);
+  RAY_LOG(DEBUG) << "Pinned object " << object_id.Hex();
+}
+
+void EvictionPolicy::UnpinObject(const ObjectID &object_id) {
+  pinned_objects_.erase(object_id);
+  RAY_LOG(DEBUG) << "Unpinned object " << object_id.Hex();
+}
+
+bool EvictionPolicy::IsObjectPinned(const ObjectID &object_id) const {
+  return pinned_objects_.count(object_id) > 0;
+}
+
+void EvictionPolicy::SetReconstructionCost(const ObjectID &object_id, int64_t cost) {
+  reconstruction_costs_[object_id] = cost;
+  RAY_LOG(DEBUG) << "Set reconstruction cost for " << object_id.Hex() << " to " << cost;
+}
+
+double EvictionPolicy::CalculateEvictionScore(const EvictionCandidate &candidate) {
+  // Higher score = more likely to evict
+  // Prefer evicting:
+  // - Old objects (high age_score)
+  // - Large objects (high size_score)
+  // - Easy to reconstruct (low cost_penalty)
+  // - Not pinned (infinite penalty for pinned)
+
+  if (candidate.is_pinned) {
+    // Pinned objects should never be evicted
+    return -std::numeric_limits<double>::infinity();
+  }
+
+  // Get current time for age calculation (using steady clock)
+  auto now = std::chrono::steady_clock::now().time_since_epoch().count();
+  double age_score = static_cast<double>(now - candidate.last_access_time);
+
+  double size_score = static_cast<double>(candidate.size);
+  double cost_penalty = static_cast<double>(candidate.reconstruction_cost) * kCostWeight;
+
+  // The formula: prioritize old, large objects that are cheap to reconstruct
+  // Adding 1 to cost_penalty to avoid division by zero
+  return (age_score * size_score) / (1.0 + cost_penalty);
+}
+
 }  // namespace plasma

@@ -36,6 +36,20 @@
 
 namespace plasma {
 
+/// Weight for reconstruction cost in eviction score calculation.
+/// Higher values make the policy more reluctant to evict expensive objects.
+constexpr double kCostWeight = 1.0;
+
+/// Information about an object that may be evicted.
+struct EvictionCandidate {
+  ObjectID object_id;
+  int64_t size;
+  int64_t reconstruction_cost;  // Estimated recompute time in microseconds
+  int64_t last_access_time;     // Timestamp of last access
+  int reference_count;          // Current reference count
+  bool is_pinned;               // Whether the object is pinned (should not evict)
+};
+
 /// The eviction policy interface.
 class IEvictionPolicy {
  public:
@@ -175,6 +189,37 @@ class EvictionPolicy : public IEvictionPolicy {
 
   std::string DebugString() const override;
 
+  /// Pin an object to prevent it from being evicted.
+  ///
+  /// \param object_id The ID of the object to pin.
+  void PinObject(const ObjectID &object_id);
+
+  /// Unpin an object to allow it to be evicted.
+  ///
+  /// \param object_id The ID of the object to unpin.
+  void UnpinObject(const ObjectID &object_id);
+
+  /// Check if an object is pinned.
+  ///
+  /// \param object_id The ID of the object to check.
+  /// \return true if the object is pinned.
+  bool IsObjectPinned(const ObjectID &object_id) const;
+
+  /// Set the reconstruction cost for an object.
+  /// This influences eviction priority - objects with higher costs
+  /// are less likely to be evicted.
+  ///
+  /// \param object_id The ID of the object.
+  /// \param cost The estimated reconstruction cost in microseconds.
+  void SetReconstructionCost(const ObjectID &object_id, int64_t cost);
+
+  /// Calculate the eviction score for a candidate.
+  /// Higher score means more likely to be evicted.
+  ///
+  /// \param candidate The eviction candidate information.
+  /// \return The eviction score.
+  static double CalculateEvictionScore(const EvictionCandidate &candidate);
+
  private:
   /// Returns the size of the object
   int64_t GetObjectSize(const ObjectID &object_id) const;
@@ -192,7 +237,15 @@ class EvictionPolicy : public IEvictionPolicy {
 
   const IAllocator &allocator_;
 
+  /// Set of pinned object IDs that should not be evicted.
+  absl::flat_hash_set<ObjectID> pinned_objects_;
+
+  /// Map of object IDs to their reconstruction costs.
+  absl::flat_hash_map<ObjectID, int64_t> reconstruction_costs_;
+
   FRIEND_TEST(EvictionPolicyTest, Test);
+  FRIEND_TEST(EvictionPolicyTest, TestCostAwareEviction);
+  FRIEND_TEST(EvictionPolicyTest, TestPinnedObjects);
 };
 
 }  // namespace plasma

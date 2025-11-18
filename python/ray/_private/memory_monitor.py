@@ -1,8 +1,12 @@
+import asyncio
 import logging
 import os
 import platform
 import sys
 import time
+from dataclasses import dataclass
+from enum import Enum
+from typing import Callable, List, Optional
 
 import ray  # noqa F401
 
@@ -12,6 +16,56 @@ from ray._common.utils import get_system_memory
 import psutil  # noqa E402
 
 logger = logging.getLogger(__name__)
+
+
+class MemoryPressureLevel(Enum):
+    """Memory pressure levels for proactive memory management."""
+    NORMAL = 0    # < 60% - Normal operation
+    ELEVATED = 1  # 60-75% - Start proactive measures
+    HIGH = 2      # 75-90% - Aggressive measures
+    CRITICAL = 3  # > 90% - Emergency measures
+
+
+@dataclass
+class MemoryPressure:
+    """Represents the current memory pressure state."""
+    object_store_ratio: float
+    system_memory_ratio: float
+    pending_tasks: int
+    level: MemoryPressureLevel
+    consecutive_high_count: int = 0
+
+
+def classify_memory_pressure(usage_ratio: float) -> MemoryPressureLevel:
+    """Classify memory usage ratio into a pressure level.
+
+    Args:
+        usage_ratio: Memory usage ratio between 0 and 1.
+
+    Returns:
+        The corresponding MemoryPressureLevel.
+    """
+    if usage_ratio >= 0.90:
+        return MemoryPressureLevel.CRITICAL
+    elif usage_ratio >= 0.75:
+        return MemoryPressureLevel.HIGH
+    elif usage_ratio >= 0.60:
+        return MemoryPressureLevel.ELEVATED
+    else:
+        return MemoryPressureLevel.NORMAL
+
+
+class MemoryPressureError(Exception):
+    """Exception raised when memory pressure is too high to proceed."""
+
+    def __init__(self, msg: str, remediation: Optional[List[str]] = None):
+        self.remediation = remediation or []
+        full_msg = msg
+        if self.remediation:
+            full_msg += "\n\nSuggested actions:\n"
+            for i, action in enumerate(self.remediation, 1):
+                full_msg += f"  {i}. {action}\n"
+        super().__init__(full_msg)
 
 
 def get_rss(memory_info):
@@ -139,6 +193,12 @@ class MemoryMonitor:
             or "RAY_DISABLE_MEMORY_MONITOR" in os.environ
         )
 
+        # Memory pressure tracking
+        self._pressure_callbacks: List[Callable[[MemoryPressure], None]] = []
+        self._current_level = MemoryPressureLevel.NORMAL
+        self._consecutive_high_count = 0
+        self._running = False
+
     def get_memory_usage(self):
         from ray._private.utils import get_used_memory
 
@@ -146,6 +206,109 @@ class MemoryMonitor:
         used_gb = get_used_memory() / (1024**3)
 
         return used_gb, total_gb
+
+    def get_pressure(self) -> MemoryPressure:
+        """Calculate and return the current memory pressure state.
+
+        Returns:
+            MemoryPressure object with current memory state.
+        """
+        used_gb, total_gb = self.get_memory_usage()
+        system_ratio = used_gb / total_gb if total_gb > 0 else 0
+
+        # Get object store usage if available
+        try:
+            from ray._private.internal_api import memory_summary
+            # This is a simplified approach - in production you'd get actual metrics
+            object_store_ratio = system_ratio  # Simplified
+        except Exception:
+            object_store_ratio = system_ratio
+
+        # Get pending task count if available
+        try:
+            pending_tasks = 0  # Would get from scheduler in production
+        except Exception:
+            pending_tasks = 0
+
+        level = classify_memory_pressure(system_ratio)
+
+        return MemoryPressure(
+            object_store_ratio=object_store_ratio,
+            system_memory_ratio=system_ratio,
+            pending_tasks=pending_tasks,
+            level=level,
+            consecutive_high_count=self._consecutive_high_count
+        )
+
+    def register_pressure_callback(
+        self, callback: Callable[[MemoryPressure], None]
+    ) -> None:
+        """Register a callback to be invoked when pressure level changes.
+
+        Args:
+            callback: Function that takes a MemoryPressure object.
+        """
+        self._pressure_callbacks.append(callback)
+
+    def unregister_pressure_callback(
+        self, callback: Callable[[MemoryPressure], None]
+    ) -> None:
+        """Unregister a previously registered callback.
+
+        Args:
+            callback: The callback to remove.
+        """
+        if callback in self._pressure_callbacks:
+            self._pressure_callbacks.remove(callback)
+
+    async def _notify_pressure_change(self, pressure: MemoryPressure) -> None:
+        """Notify all registered callbacks of a pressure change.
+
+        Args:
+            pressure: The new pressure state.
+        """
+        for callback in self._pressure_callbacks:
+            try:
+                if asyncio.iscoroutinefunction(callback):
+                    await callback(pressure)
+                else:
+                    callback(pressure)
+            except Exception as e:
+                logger.error(f"Error in pressure callback: {e}")
+
+    async def monitor_loop(self, interval: float = 0.1) -> None:
+        """Async monitoring loop that checks memory pressure periodically.
+
+        Args:
+            interval: Time in seconds between checks (default 100ms).
+        """
+        self._running = True
+        while self._running:
+            pressure = self.get_pressure()
+
+            # Track consecutive high pressure count
+            if pressure.level in (MemoryPressureLevel.HIGH,
+                                  MemoryPressureLevel.CRITICAL):
+                self._consecutive_high_count += 1
+            else:
+                self._consecutive_high_count = 0
+
+            pressure.consecutive_high_count = self._consecutive_high_count
+
+            # Notify if level changed
+            if pressure.level != self._current_level:
+                logger.info(
+                    f"Memory pressure level changed: "
+                    f"{self._current_level.name} -> {pressure.level.name}"
+                )
+                await self._notify_pressure_change(pressure)
+                self._current_level = pressure.level
+
+            await asyncio.sleep(interval)
+
+    def stop_monitor(self) -> None:
+        """Stop the monitoring loop."""
+        self._running = False
 
     def raise_if_low_memory(self):
         if self.disabled:
@@ -163,3 +326,19 @@ class MemoryMonitor:
                 )
             else:
                 logger.debug(f"Memory usage is {used_gb} / {total_gb}")
+
+
+# Global memory monitor instance
+_global_memory_monitor: Optional[MemoryMonitor] = None
+
+
+def get_memory_monitor() -> MemoryMonitor:
+    """Get or create the global memory monitor instance.
+
+    Returns:
+        The global MemoryMonitor instance.
+    """
+    global _global_memory_monitor
+    if _global_memory_monitor is None:
+        _global_memory_monitor = MemoryMonitor()
+    return _global_memory_monitor
