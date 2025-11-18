@@ -65,6 +65,10 @@ from ray._common.utils import load_class
 from ray._private.authentication.authentication_token_setup import (
     ensure_token_if_auth_enabled,
 )
+from ray._private.security_defaults import (
+    cleanup_security_resources,
+    setup_secure_defaults,
+)
 from ray._private.client_mode_hook import client_mode_hook
 from ray._private.custom_types import TensorTransportEnum
 from ray._private.function_manager import FunctionActorManager
@@ -1453,6 +1457,8 @@ def init(
     enable_resource_isolation: bool = False,
     system_reserved_cpu: Optional[float] = None,
     system_reserved_memory: Optional[int] = None,
+    development_mode: bool = False,
+    legacy_security_mode: bool = False,
     **kwargs,
 ) -> BaseContext:
     """
@@ -1573,6 +1579,21 @@ def init(
             By default, the value will be atleast 500MB, and at most 10GB. The default value is
             calculated using the formula min(10GB, max(500MB, 0.10 * memory_available_on_the_system))
             This option only works if enable_resource_isolation is True.
+        development_mode: If True, disables TLS encryption and authentication
+            for development purposes. A warning will be printed and repeated
+            periodically. Do not use in production. Can also be enabled via
+            the RAY_DEVELOPMENT_MODE environment variable.
+        legacy_security_mode: If True, uses v2.x behavior where security is
+            disabled by default. This is intended for gradual migration. Can
+            also be enabled via the RAY_LEGACY_SECURITY_MODE environment variable.
+        _tls_cert_path: Custom path to TLS certificate file. If provided along
+            with _tls_key_path and _tls_ca_path, these will be used instead of
+            auto-generated certificates.
+        _tls_key_path: Custom path to TLS private key file.
+        _tls_ca_path: Custom path to TLS CA certificate file.
+        _auth_token: Custom authentication token string. If provided, this will
+            be used instead of auto-generated token.
+        _auth_token_path: Custom path to authentication token file.
         _cgroup_path: The path for the cgroup the raylet should use to enforce resource isolation.
             By default, the cgroup used for resource isolation will be /sys/fs/cgroup.
             The process starting ray must have read/write permissions to this path.
@@ -1668,6 +1689,24 @@ def init(
     _node_name: str = kwargs.pop("_node_name", None)
     # Fix for https://github.com/ray-project/ray/issues/26729
     _skip_env_hook: bool = kwargs.pop("_skip_env_hook", False)
+
+    # Parse security-related hidden options
+    _tls_cert_path: Optional[str] = kwargs.pop("_tls_cert_path", None)
+    _tls_key_path: Optional[str] = kwargs.pop("_tls_key_path", None)
+    _tls_ca_path: Optional[str] = kwargs.pop("_tls_ca_path", None)
+    _auth_token: Optional[str] = kwargs.pop("_auth_token", None)
+    _auth_token_path: Optional[str] = kwargs.pop("_auth_token_path", None)
+
+    # Set up secure defaults based on configuration
+    setup_secure_defaults(
+        development_mode=development_mode,
+        legacy_security_mode=legacy_security_mode,
+        tls_cert_path=_tls_cert_path,
+        tls_key_path=_tls_key_path,
+        tls_ca_path=_tls_ca_path,
+        auth_token=_auth_token,
+        auth_token_path=_auth_token_path,
+    )
 
     resource_isolation_config = ResourceIsolationConfig(
         enable_resource_isolation=enable_resource_isolation,
@@ -2097,6 +2136,9 @@ def shutdown(_exiting_interpreter: bool = False):
             and false otherwise. If we are exiting the interpreter, we will
             wait a little while to print any extra error messages.
     """
+    # Clean up security-related resources (e.g., development mode warning thread)
+    cleanup_security_resources()
+
     # Make sure to clean up compiled dag node if exists.
     from ray.dag.compiled_dag_node import _shutdown_all_compiled_dags
 

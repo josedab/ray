@@ -175,6 +175,124 @@ unreachable, it may become reachable again due to the dashboard restarting.
 
 If you don't want the dashboard, set ``--include-dashboard=false``.
 
+.. _security-defaults:
+
+Security defaults
+-----------------
+
+Starting with Ray 3.0, Ray enables security by default. This includes TLS encryption
+for all cluster communication and token-based authentication for client connections.
+
+Development mode
+~~~~~~~~~~~~~~~~
+
+For local development and testing, you can disable security by using development mode:
+
+.. testcode::
+  :skipif: True
+
+  import ray
+
+  # Explicitly disable security for local development
+  ray.init(development_mode=True)
+
+When development mode is enabled:
+
+- A warning is printed to stderr
+- The warning repeats every 5 minutes as a reminder
+- TLS encryption is disabled
+- Authentication is disabled
+
+You can also enable development mode via environment variable:
+
+.. code-block:: bash
+
+  RAY_DEVELOPMENT_MODE=1 python your_script.py
+
+.. warning::
+
+  Never use development mode in production. It disables all security features.
+
+Legacy security mode
+~~~~~~~~~~~~~~~~~~~~
+
+For gradual migration from Ray 2.x, you can use legacy security mode to preserve
+the old behavior where security is disabled by default:
+
+.. testcode::
+  :skipif: True
+
+  import ray
+
+  # Use Ray 2.x security behavior
+  ray.init(legacy_security_mode=True)
+
+Or via environment variable:
+
+.. code-block:: bash
+
+  RAY_LEGACY_SECURITY_MODE=1 python your_script.py
+
+Auto-generated credentials
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When you call ``ray.init()`` without development mode or legacy mode, Ray
+automatically generates TLS certificates and authentication tokens:
+
+- TLS certificates are stored in ``~/.ray/certs/``
+- Authentication token is stored in ``~/.ray/auth_token``
+
+These credentials are generated once and reused for subsequent sessions.
+
+Custom security configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+For production deployments, you can provide your own certificates and tokens:
+
+.. testcode::
+  :skipif: True
+
+  import ray
+
+  # Use custom TLS certificates
+  ray.init(
+      _tls_cert_path="/path/to/cert.pem",
+      _tls_key_path="/path/to/key.pem",
+      _tls_ca_path="/path/to/ca.pem",
+      _auth_token="your-production-token"
+  )
+
+Or load the token from a file:
+
+.. testcode::
+  :skipif: True
+
+  import ray
+
+  ray.init(
+      _tls_cert_path="/path/to/cert.pem",
+      _tls_key_path="/path/to/key.pem",
+      _tls_ca_path="/path/to/ca.pem",
+      _auth_token_path="/path/to/token_file"
+  )
+
+Connecting to a secure cluster
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+When connecting to an existing Ray cluster, you need to provide the same
+credentials used by the cluster:
+
+.. testcode::
+  :skipif: True
+
+  import ray
+
+  ray.init(
+      address="ray://production-server:10001",
+      _tls_ca_path="~/.ray/certs/ca.crt",
+      _auth_token_path="~/.ray/auth_token"
+  )
+
 TLS authentication
 ------------------
 
