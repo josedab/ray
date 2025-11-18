@@ -52,6 +52,7 @@ import ray._private.serialization as serialization
 import ray._private.services as services
 import ray._private.state
 import ray._private.worker
+from ray._private.config_validator import validate_init_config
 
 # Ray modules
 import ray.actor
@@ -1637,6 +1638,64 @@ def init(
             encoding=ray_constants.RAY_LOGGING_CONFIG_ENCODING
         )
         logging_config._apply()
+
+    # Validate configuration
+    _config_validation: str = kwargs.pop("_config_validation", "on")
+    if _config_validation != "off":
+        # Build config dict for validation
+        init_config = {
+            "address": address,
+            "num_cpus": num_cpus,
+            "num_gpus": num_gpus,
+            "resources": resources,
+            "labels": labels,
+            "object_store_memory": object_store_memory,
+            "local_mode": local_mode,
+            "ignore_reinit_error": ignore_reinit_error,
+            "include_dashboard": include_dashboard,
+            "dashboard_host": dashboard_host,
+            "dashboard_port": dashboard_port,
+            "configure_logging": configure_logging,
+            "logging_level": logging_level,
+            "logging_format": logging_format,
+            "log_to_driver": log_to_driver,
+            "namespace": namespace,
+            "runtime_env": runtime_env,
+            "enable_resource_isolation": enable_resource_isolation,
+            "system_reserved_cpu": system_reserved_cpu,
+            "system_reserved_memory": system_reserved_memory,
+        }
+        # Remove None values for cleaner validation
+        init_config = {k: v for k, v in init_config.items() if v is not None}
+        # Add kwargs for validation
+        init_config.update(kwargs)
+
+        validation_result, _ = validate_init_config(
+            init_config, validation_mode=_config_validation
+        )
+
+        # Log warnings
+        for warning in validation_result.warnings:
+            logger.warning(f"Configuration warning: {warning}")
+
+        # Handle errors based on validation mode
+        if validation_result.has_errors:
+            error_msg = "Configuration errors:\n"
+            for error in validation_result.errors:
+                error_msg += f"  - {error}\n"
+            if _config_validation == "strict":
+                raise ValueError(error_msg)
+            else:
+                # Log errors as warnings in normal mode
+                for error in validation_result.errors:
+                    logger.warning(f"Configuration error: {error}")
+
+        # In strict mode, warnings also become errors
+        if _config_validation == "strict" and validation_result.has_warnings:
+            error_msg = "Configuration warnings (strict mode):\n"
+            for warning in validation_result.warnings:
+                error_msg += f"  - {warning}\n"
+            raise ValueError(error_msg)
 
     # Parse the hidden options
     _cgroup_path: str = kwargs.pop("_cgroup_path", None)

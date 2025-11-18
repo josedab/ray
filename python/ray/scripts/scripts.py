@@ -2769,6 +2769,153 @@ def get_auth_token(generate):
     click.echo(token, nl=False)
 
 
+@click.group()
+def config():
+    """Commands for Ray configuration management."""
+    pass
+
+
+@config.command(name="validate")
+@click.argument("config_file", required=False, type=click.Path(exists=True))
+@click.option(
+    "--env-vars",
+    is_flag=True,
+    default=False,
+    help="Also validate RAY_* environment variables.",
+)
+@PublicAPI
+def validate_config_cli(config_file, env_vars):
+    """Validate a Ray cluster configuration file or check environment variables.
+
+    If CONFIG_FILE is provided, validates the cluster YAML configuration.
+    Use --env-vars to validate current RAY_* environment variables.
+
+    Examples:
+
+        # Validate a cluster config file
+        ray config validate cluster.yaml
+
+        # Validate environment variables
+        ray config validate --env-vars
+    """
+    from ray._private.config_validator import (
+        validate_config,
+        validate_environment_variables,
+        ValidationResult,
+    )
+
+    result = ValidationResult()
+    has_output = False
+
+    if config_file:
+        try:
+            with open(config_file, "r") as f:
+                config_data = yaml.safe_load(f)
+
+            click.echo(f"Validating configuration file: {config_file}")
+            click.echo()
+
+            # Extract init-related config from cluster config
+            init_config = {}
+            if isinstance(config_data, dict):
+                # Handle cluster autoscaler config format
+                if "provider" in config_data:
+                    click.echo(
+                        cf.bold("Provider: ")
+                        + click.style(str(config_data.get("provider", {}).get("type", "unknown")), fg="green")
+                    )
+
+                # Extract head_node resources
+                head_node = config_data.get("head_node", {})
+                if head_node:
+                    click.echo(cf.bold("Head node type: ") + str(head_node))
+
+                # Extract worker resources
+                worker_nodes = config_data.get("worker_nodes", {})
+                if worker_nodes:
+                    click.echo(cf.bold("Worker node types: ") + str(list(worker_nodes.keys())))
+
+                # Extract min/max workers
+                min_workers = config_data.get("min_workers", 0)
+                max_workers = config_data.get("max_workers", 0)
+
+                if min_workers < 0:
+                    result.errors.append(f"min_workers={min_workers} must be >= 0")
+                if max_workers < 0:
+                    result.errors.append(f"max_workers={max_workers} must be >= 0")
+                if max_workers < min_workers:
+                    result.errors.append(
+                        f"max_workers={max_workers} must be >= min_workers={min_workers}"
+                    )
+
+                # Extract initialization config
+                init_config = config_data.get("initialization_commands", [])
+                setup_config = config_data.get("setup_commands", [])
+
+            # Validate any ray.init-style config
+            if "ray" in config_data:
+                ray_config = config_data.get("ray", {})
+                validation_result = validate_config(ray_config)
+                result.merge(validation_result)
+
+            has_output = True
+
+        except yaml.YAMLError as e:
+            result.errors.append(f"Invalid YAML: {e}")
+            has_output = True
+        except Exception as e:
+            result.errors.append(f"Error reading config file: {e}")
+            has_output = True
+
+    if env_vars:
+        click.echo("Validating environment variables...")
+        click.echo()
+        env_result = validate_environment_variables()
+        result.merge(env_result)
+        has_output = True
+
+    if not has_output:
+        click.echo("No configuration to validate. Provide a config file or use --env-vars.")
+        click.echo()
+        click.echo("Usage:")
+        click.echo("  ray config validate cluster.yaml")
+        click.echo("  ray config validate --env-vars")
+        sys.exit(1)
+
+    # Print results
+    click.echo()
+    if result.errors:
+        click.echo(click.style("Errors:", fg="red", bold=True))
+        for error in result.errors:
+            click.echo(click.style(f"  ✗ {error}", fg="red"))
+        click.echo()
+
+    if result.warnings:
+        click.echo(click.style("Warnings:", fg="yellow", bold=True))
+        for warning in result.warnings:
+            click.echo(click.style(f"  ⚠ {warning}", fg="yellow"))
+        click.echo()
+
+    if result.info:
+        click.echo(click.style("Info:", fg="blue", bold=True))
+        for info in result.info:
+            click.echo(click.style(f"  ℹ {info}", fg="blue"))
+        click.echo()
+
+    if result.is_valid and not result.has_warnings:
+        click.echo(click.style("✓ Configuration is valid", fg="green", bold=True))
+        sys.exit(0)
+    elif result.is_valid:
+        click.echo(
+            click.style("✓ Configuration is valid with warnings", fg="yellow", bold=True)
+        )
+        sys.exit(0)
+    else:
+        click.echo(click.style("✗ Configuration has errors", fg="red", bold=True))
+        sys.exit(1)
+
+
+cli.add_command(config)
 cli.add_command(dashboard)
 cli.add_command(debug)
 cli.add_command(start)

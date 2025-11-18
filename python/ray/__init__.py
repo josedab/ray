@@ -77,6 +77,33 @@ _configure_system()
 # Delete configuration function.
 del _configure_system
 
+
+def _validate_environment_variables():
+    """Validate RAY_* environment variables on import."""
+    # Only validate if RAY_CONFIG_VALIDATION is not disabled
+    if os.environ.get("RAY_CONFIG_VALIDATION", "on").lower() == "off":
+        return
+
+    try:
+        from ray._private.config_validator import validate_environment_variables
+
+        result = validate_environment_variables()
+
+        # Log any warnings
+        for warning in result.warnings:
+            logger.warning(f"Environment variable warning: {warning}")
+
+        # Log errors (don't fail on import, just warn)
+        for error in result.errors:
+            logger.warning(f"Environment variable error: {error}")
+    except ImportError:
+        # Config validator not available yet, skip
+        pass
+
+
+_validate_environment_variables()
+del _validate_environment_variables
+
 from ray import _version  # noqa: E402
 
 __commit__ = _version.commit
