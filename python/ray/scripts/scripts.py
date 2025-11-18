@@ -2769,6 +2769,161 @@ def get_auth_token(generate):
     click.echo(token, nl=False)
 
 
+# ==== Config CLI Commands ====
+
+
+@click.group(name="config")
+def config_group():
+    """Manage Ray configuration."""
+    pass
+
+
+@config_group.command(name="show")
+@click.argument("section", required=False, type=str)
+@click.option(
+    "--format",
+    "output_format",
+    type=click.Choice(["yaml", "json"]),
+    default="yaml",
+    help="Output format (yaml or json)",
+)
+@click.option(
+    "--diff",
+    is_flag=True,
+    default=False,
+    help="Show only values that differ from defaults",
+)
+def config_show(section, output_format, diff):
+    """Show current Ray configuration.
+
+    Optionally specify a SECTION (e.g., object_store, scheduling) to show
+    only that section of the configuration.
+    """
+    from ray._private.unified_config import ConfigLoader
+
+    loader = ConfigLoader()
+    config = loader.load()
+
+    if diff:
+        differences = config.diff_from_defaults()
+        if not differences:
+            click.echo("Configuration matches defaults (no differences)")
+            return
+
+        if output_format == "json":
+            import json
+            output = {k: {"default": v[0], "current": v[1]} for k, v in differences.items()}
+            click.echo(json.dumps(output, indent=2, default=str))
+        else:
+            click.echo("# Configuration differences from defaults:")
+            for path, (default_val, current_val) in sorted(differences.items()):
+                click.echo(f"{path}:")
+                click.echo(f"  default: {default_val}")
+                click.echo(f"  current: {current_val}")
+        return
+
+    config_dict = config.to_dict()
+
+    if section:
+        if section not in config_dict:
+            available = ", ".join(config_dict.keys())
+            raise click.ClickException(
+                f"Unknown section: {section}. Available sections: {available}"
+            )
+        config_dict = {section: config_dict[section]}
+
+    if output_format == "json":
+        import json
+        click.echo(json.dumps(config_dict, indent=2, default=str))
+    else:
+        click.echo(yaml.dump(config_dict, default_flow_style=False, sort_keys=False))
+
+
+@config_group.command(name="validate")
+@click.argument("config_file", required=True, type=click.Path(exists=True))
+def config_validate(config_file):
+    """Validate a Ray configuration file.
+
+    CONFIG_FILE is the path to a YAML configuration file to validate.
+    """
+    from ray._private.unified_config import RayConfig
+
+    try:
+        config = RayConfig.from_yaml_file(config_file)
+        errors = config.validate()
+
+        if errors:
+            click.echo(f"Configuration file has {len(errors)} error(s):", err=True)
+            for error in errors:
+                click.echo(f"  - {error}", err=True)
+            sys.exit(1)
+        else:
+            click.echo(f"Configuration file '{config_file}' is valid.")
+    except yaml.YAMLError as e:
+        raise click.ClickException(f"Invalid YAML syntax: {e}")
+    except Exception as e:
+        raise click.ClickException(f"Error loading configuration: {e}")
+
+
+@config_group.command(name="generate")
+@click.option(
+    "--output",
+    "-o",
+    type=click.Path(),
+    help="Output file path (defaults to stdout)",
+)
+def config_generate(output):
+    """Generate a default Ray configuration file with documentation.
+
+    The generated file contains all default values and documentation comments.
+    """
+    from ray._private.unified_config import generate_config_template
+
+    template = generate_config_template()
+
+    if output:
+        with open(output, 'w') as f:
+            f.write(template)
+        click.echo(f"Configuration template written to: {output}")
+    else:
+        click.echo(template)
+
+
+@config_group.command(name="env-vars")
+@click.option(
+    "--export",
+    "show_export",
+    is_flag=True,
+    default=False,
+    help="Show as export commands for shell",
+)
+def config_env_vars(show_export):
+    """Show environment variable mappings for Ray configuration.
+
+    This shows which environment variables can be used to configure Ray
+    and their corresponding configuration paths.
+    """
+    from ray._private.unified_config import ConfigLoader
+
+    mappings = ConfigLoader.get_env_var_mappings()
+
+    if show_export:
+        click.echo("# Environment variable mappings for Ray configuration")
+        click.echo("# Uncomment and set values as needed")
+        click.echo("")
+        for env_var, config_path in sorted(mappings.items()):
+            click.echo(f"# {config_path}")
+            click.echo(f"# export {env_var}=")
+            click.echo("")
+    else:
+        click.echo("Environment Variable Mappings:")
+        click.echo("")
+        max_var_len = max(len(v) for v in mappings.keys())
+        for env_var, config_path in sorted(mappings.items()):
+            click.echo(f"  {env_var:<{max_var_len}}  ->  {config_path}")
+
+
+cli.add_command(config_group, name="config")
 cli.add_command(dashboard)
 cli.add_command(debug)
 cli.add_command(start)

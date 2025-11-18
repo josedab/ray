@@ -344,4 +344,154 @@ The list of available driver options:
   - Type: ``String``
   - Default: A random UUID string value.
 
+.. _unified-config:
+
+Unified Configuration System
+----------------------------
+
+Ray provides a unified configuration system that consolidates all configuration options into a single, hierarchical model with clear precedence rules. This system supports configuration through YAML files, environment variables, and programmatic APIs.
+
+Configuration Sources and Precedence
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Configuration is loaded from multiple sources in the following priority order (highest to lowest):
+
+1. **Programmatic overrides** - Values passed to ``ray.init()``
+2. **Environment variables** - ``RAY_*`` prefixed variables
+3. **Configuration file** - ``~/.ray/config.yaml`` or path specified by ``RAY_CONFIG_FILE``
+4. **Defaults** - Built-in default values
+
+Configuration File Format
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+Create a configuration file at ``~/.ray/config.yaml``:
+
+.. code-block:: yaml
+
+   # Resource configuration
+   resources:
+     num_cpus: 4
+     num_gpus: 1
+     memory: 16GB
+
+   # Object store configuration
+   object_store:
+     memory_bytes: 8GB
+     spilling:
+       enabled: true
+       directory: /mnt/ssd/ray_spill
+     eviction_threshold: 0.8
+
+   # Scheduling configuration
+   scheduling:
+     spread_threshold: 0.5
+     worker_lease_timeout_seconds: 10s
+
+   # Security configuration
+   security:
+     tls:
+       enabled: false
+     authentication:
+       mode: disabled
+     development_mode: true
+
+   # Observability configuration
+   observability:
+     metrics:
+       enabled: true
+       export_port: 8080
+     logging:
+       level: INFO
+       format: text
+
+   # Dashboard configuration
+   dashboard:
+     host: 127.0.0.1
+
+Environment Variables
+~~~~~~~~~~~~~~~~~~~~~
+
+You can configure Ray using environment variables with a structured naming convention:
+
+.. code-block:: bash
+
+   # Resource configuration
+   export RAY_RESOURCES_NUM_CPUS=4
+   export RAY_RESOURCES_NUM_GPUS=1
+
+   # Object store configuration
+   export RAY_OBJECT_STORE_MEMORY=8GB
+   export RAY_OBJECT_STORE_SPILLING_ENABLED=true
+
+   # Scheduling configuration
+   export RAY_SCHEDULING_SPREAD_THRESHOLD=0.5
+
+   # Security configuration
+   export RAY_SECURITY_DEVELOPMENT_MODE=true
+
+   # Observability configuration
+   export RAY_OBSERVABILITY_LOGGING_LEVEL=DEBUG
+
+To see all available environment variable mappings:
+
+.. code-block:: bash
+
+   ray config env-vars
+
+CLI Tools
+~~~~~~~~~
+
+The ``ray config`` command group provides tools for managing configuration:
+
+.. code-block:: bash
+
+   # Show current configuration
+   ray config show
+
+   # Show specific section
+   ray config show object_store
+
+   # Show differences from defaults
+   ray config show --diff
+
+   # Validate a configuration file
+   ray config validate ~/.ray/config.yaml
+
+   # Generate a default configuration template
+   ray config generate > config.yaml
+
+   # Show environment variable mappings
+   ray config env-vars
+
+Programmatic Configuration
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+You can also configure Ray programmatically using the ``RayConfig`` class:
+
+.. testcode::
+   :skipif: True
+
+   from ray._private.unified_config import RayConfig, ResourceConfig, ObjectStoreConfig, ConfigLoader
+
+   # Create a configuration object
+   config = RayConfig(
+       resources=ResourceConfig(num_cpus=4, num_gpus=1),
+       object_store=ObjectStoreConfig(
+           memory_bytes=8 * 1024**3,
+           eviction_threshold=0.8
+       )
+   )
+
+   # Load configuration from file and environment
+   loader = ConfigLoader()
+   config = loader.load()
+
+   # Get configuration as YAML
+   print(config.to_yaml())
+
+   # Show differences from defaults
+   diff = config.diff_from_defaults()
+   for path, (default, current) in diff.items():
+       print(f"{path}: {default} -> {current}")
+
 .. _`Apache Arrow`: https://arrow.apache.org/
