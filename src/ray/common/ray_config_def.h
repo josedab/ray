@@ -392,6 +392,39 @@ RAY_CONFIG(uint64_t, gcs_max_concurrent_resource_pulls, 100)
 // The storage backend to use for the GCS. It can be either 'redis' or 'memory'.
 RAY_CONFIG(std::string, gcs_storage, "memory")
 
+/// Number of GCS shards for horizontal scaling. Default 1 (single shard).
+/// When > 1, data will be distributed across shards using consistent hashing.
+RAY_CONFIG(int32_t, gcs_num_shards, 1)
+
+/// Enable sharded GCS mode with client-side routing.
+/// When enabled, clients will route operations to appropriate shards.
+RAY_CONFIG(bool, gcs_enable_sharding, false)
+
+/// Comma-separated list of etcd endpoints for etcd storage backend.
+/// Example: "http://etcd-0:2379,http://etcd-1:2379,http://etcd-2:2379"
+RAY_CONFIG(std::string, gcs_etcd_endpoints, "")
+
+/// Key prefix for etcd storage backend (namespace).
+RAY_CONFIG(std::string, gcs_etcd_key_prefix, "ray")
+
+/// Connection timeout for etcd in milliseconds.
+RAY_CONFIG(int32_t, gcs_etcd_connect_timeout_ms, 5000)
+
+/// Request timeout for etcd operations in milliseconds.
+RAY_CONFIG(int32_t, gcs_etcd_request_timeout_ms, 30000)
+
+/// Enable TLS for etcd connection.
+RAY_CONFIG(bool, gcs_etcd_use_tls, false)
+
+/// CA certificate path for etcd TLS.
+RAY_CONFIG(std::string, gcs_etcd_ca_cert_path, "")
+
+/// Client certificate path for etcd mutual TLS.
+RAY_CONFIG(std::string, gcs_etcd_client_cert_path, "")
+
+/// Client key path for etcd mutual TLS.
+RAY_CONFIG(std::string, gcs_etcd_client_key_path, "")
+
 /// Duration to sleep after failing to put an object in plasma because it is full.
 RAY_CONFIG(uint32_t, object_store_full_delay_ms, 10)
 

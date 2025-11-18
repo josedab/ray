@@ -122,3 +122,28 @@ ray_cc_test(
         "@com_google_googletest//:gtest_main",
     ],
 )
+
+ray_cc_test(
+    name = "gcs_shard_router_test",
+    size = "small",
+    srcs = ["gcs_shard_router_test.cc"],
+    tags = ["team:core"],
+    deps = [
+        "//src/ray/common:id",
+        "//src/ray/gcs/store_client:gcs_shard_router",
+        "@com_google_googletest//:gtest_main",
+    ],
+)
+
+ray_cc_test(
+    name = "sharded_store_client_test",
+    size = "small",
+    srcs = ["sharded_store_client_test.cc"],
+    tags = ["team:core"],
+    deps = [
+        ":store_client_test_lib",
+        "//src/ray/gcs/store_client:in_memory_store_client",
+        "//src/ray/gcs/store_client:sharded_store_client",
+        "@com_google_googletest//:gtest_main",
+    ],
+)

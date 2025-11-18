@@ -59,3 +59,38 @@ ray_cc_library(
         ":store_client",
     ],
 )
+
+ray_cc_library(
+    name = "gcs_shard_router",
+    srcs = ["gcs_shard_router.cc"],
+    hdrs = ["gcs_shard_router.h"],
+    deps = [
+        "//src/ray/common:id",
+        "//src/ray/util:logging",
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+ray_cc_library(
+    name = "sharded_store_client",
+    srcs = ["sharded_store_client.cc"],
+    hdrs = ["sharded_store_client.h"],
+    deps = [
+        ":gcs_shard_router",
+        ":store_client",
+        "//src/ray/util:logging",
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
+
+ray_cc_library(
+    name = "etcd_store_client",
+    srcs = ["etcd_store_client.cc"],
+    hdrs = ["etcd_store_client.h"],
+    deps = [
+        ":store_client",
+        "//src/ray/common:asio",
+        "//src/ray/util:logging",
+        "@com_google_absl//absl/container:flat_hash_map",
+    ],
+)
