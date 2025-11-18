@@ -2769,6 +2769,61 @@ def get_auth_token(generate):
     click.echo(token, nl=False)
 
 
+@cli.command()
+@click.argument("error_code", required=False, type=str)
+@click.option(
+    "--list",
+    "-l",
+    "list_errors",
+    is_flag=True,
+    default=False,
+    help="List all available error codes.",
+)
+def error(error_code, list_errors):
+    """Get help for Ray error codes.
+
+    Provides detailed information about specific Ray errors including
+    common causes, remediation steps, and links to documentation.
+
+    Examples:
+
+        ray error OUT_OF_MEMORY
+
+        ray error --list
+    """
+    from ray._private.error_catalog import (
+        format_error_help,
+        get_all_error_codes,
+        get_error_info,
+    )
+
+    if list_errors:
+        error_codes = get_all_error_codes()
+        click.echo("Available error codes:\n")
+        for code in sorted(error_codes):
+            error_info = get_error_info(code)
+            if error_info:
+                click.echo(f"  {code}")
+                click.echo(f"    {error_info.message}\n")
+        return
+
+    if not error_code:
+        click.echo("Usage: ray error <ERROR_CODE>")
+        click.echo("\nUse 'ray error --list' to see all available error codes.")
+        return
+
+    # Try to find the error code (case-insensitive)
+    error_code_upper = error_code.upper()
+    help_text = format_error_help(error_code_upper)
+
+    if help_text:
+        click.echo(help_text)
+    else:
+        click.echo(f"Error code '{error_code}' not found.")
+        click.echo("\nUse 'ray error --list' to see all available error codes.")
+
+
+cli.add_command(error)
 cli.add_command(dashboard)
 cli.add_command(debug)
 cli.add_command(start)

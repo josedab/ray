@@ -2,12 +2,17 @@ import logging
 import os
 import sys
 from traceback import format_exception
-from typing import Optional, Union
+from typing import Any, Dict, List, Optional, Union
 
 import colorama
 
 import ray._private.ray_constants as ray_constants
 import ray.cloudpickle as pickle
+from ray._private.error_catalog import (
+    ERROR_CATALOG,
+    get_error_info,
+    get_remediation_for_exception,
+)
 from ray._raylet import ActorID, TaskID, WorkerID
 from ray.core.generated.common_pb2 import (
     PYTHON,
@@ -20,6 +25,81 @@ from ray.core.generated.common_pb2 import (
 from ray.util.annotations import DeveloperAPI, PublicAPI
 
 logger = logging.getLogger(__name__)
+
+
+class EnhancedErrorMixin:
+    """Mixin class providing enhanced error formatting with remediation steps.
+
+    This mixin can be added to exception classes to provide actionable
+    error messages including remediation steps, documentation links,
+    and diagnostic information.
+    """
+
+    def _init_enhanced_error(
+        self,
+        remediation: Optional[List[str]] = None,
+        doc_link: Optional[str] = None,
+        diagnostic_info: Optional[Dict[str, Any]] = None,
+        error_code: Optional[str] = None,
+    ):
+        """Initialize enhanced error attributes.
+
+        Args:
+            remediation: List of steps to fix the error.
+            doc_link: URL to relevant documentation.
+            diagnostic_info: Dictionary of diagnostic information.
+            error_code: Error code for looking up additional help.
+        """
+        self._remediation = remediation or []
+        self._doc_link = doc_link
+        self._diagnostic_info = diagnostic_info or {}
+        self._error_code = error_code
+
+    @property
+    def remediation(self) -> List[str]:
+        """Get remediation steps for this error."""
+        return getattr(self, "_remediation", [])
+
+    @property
+    def doc_link(self) -> Optional[str]:
+        """Get documentation link for this error."""
+        return getattr(self, "_doc_link", None)
+
+    @property
+    def diagnostic_info(self) -> Dict[str, Any]:
+        """Get diagnostic information for this error."""
+        return getattr(self, "_diagnostic_info", {})
+
+    @property
+    def error_code(self) -> Optional[str]:
+        """Get the error code for this error."""
+        return getattr(self, "_error_code", None)
+
+    def _format_enhanced_message(self, base_message: str) -> str:
+        """Format the error message with enhanced information.
+
+        Args:
+            base_message: The base error message.
+
+        Returns:
+            Formatted error message with remediation steps and diagnostics.
+        """
+        parts = [base_message]
+
+        if self.remediation:
+            parts.append("\nHow to fix:")
+            for i, step in enumerate(self.remediation, 1):
+                parts.append(f"  {i}. {step}")
+
+        if self.doc_link:
+            parts.append(f"\nDocumentation: {self.doc_link}")
+
+        if self.diagnostic_info:
+            parts.append("\nDiagnostic info:")
+            for key, value in self.diagnostic_info.items():
+                parts.append(f"  {key}: {value}")
+
+        return "\n".join(parts)
 
 
 @PublicAPI
@@ -310,22 +390,67 @@ class RayTaskError(RayError):
 
 
 @PublicAPI
-class LocalRayletDiedError(RayError):
+class LocalRayletDiedError(RayError, EnhancedErrorMixin):
     """Indicates that the task's local raylet died."""
 
+    def __init__(self, *args, context: Optional[Dict[str, Any]] = None):
+        super().__init__(*args)
+        self._context = context or {}
+
+        # Get remediation info from catalog
+        error_info = get_error_info("LOCAL_RAYLET_DIED")
+        if error_info:
+            diagnostic_info = {}
+            if self._context.get("node_id"):
+                diagnostic_info["node_id"] = self._context["node_id"]
+            if self._context.get("raylet_pid"):
+                diagnostic_info["raylet_pid"] = self._context["raylet_pid"]
+
+            self._init_enhanced_error(
+                remediation=error_info.remediation,
+                doc_link=error_info.doc_link,
+                diagnostic_info=diagnostic_info,
+                error_code="LOCAL_RAYLET_DIED",
+            )
+        else:
+            self._init_enhanced_error()
+
     def __str__(self):
-        return "The task's local raylet died. Check raylet.out for more information."
+        base_message = "The task's local raylet died."
+        return self._format_enhanced_message(base_message)
 
 
 @PublicAPI
-class WorkerCrashedError(RayError):
+class WorkerCrashedError(RayError, EnhancedErrorMixin):
     """Indicates that the worker died unexpectedly while executing a task."""
 
+    def __init__(self, *args, context: Optional[Dict[str, Any]] = None):
+        super().__init__(*args)
+        self._context = context or {}
+
+        # Get remediation info from catalog
+        error_info = get_error_info("WORKER_CRASHED")
+        if error_info:
+            diagnostic_info = {}
+            if self._context.get("worker_id"):
+                diagnostic_info["worker_id"] = self._context["worker_id"]
+            if self._context.get("node_id"):
+                diagnostic_info["node_id"] = self._context["node_id"]
+            if self._context.get("exit_code"):
+                diagnostic_info["exit_code"] = self._context["exit_code"]
+
+            self._init_enhanced_error(
+                remediation=error_info.remediation,
+                doc_link=error_info.doc_link,
+                diagnostic_info=diagnostic_info,
+                error_code="WORKER_CRASHED",
+            )
+        else:
+            self._init_enhanced_error()
+
     def __str__(self):
-        return (
-            "The worker died unexpectedly while executing this task. "
-            "Check python-core-worker-*.log files for more information."
-        )
+        base_message = "The worker died unexpectedly while executing this task."
+        return self._format_enhanced_message(base_message)
 
 
 @PublicAPI
@@ -488,44 +613,92 @@ class UserCodeException(RayError):
 
 
 @PublicAPI
-class ObjectStoreFullError(RayError):
+class ObjectStoreFullError(RayError, EnhancedErrorMixin):
     """Indicates that the object store is full.
 
     This is raised if the attempt to store the object fails
     because the object store is full even after multiple retries.
     """
 
+    def __init__(self, *args, context: Optional[Dict[str, Any]] = None):
+        super().__init__(*args)
+        self._context = context or {}
+
+        # Get remediation info from catalog
+        error_info = get_error_info("OBJECT_STORE_FULL")
+        if error_info:
+            # Build diagnostic info from context
+            diagnostic_info = {}
+            if self._context.get("object_store_size"):
+                diagnostic_info["object_store_size"] = self._context["object_store_size"]
+            if self._context.get("used_memory"):
+                diagnostic_info["used_memory"] = self._context["used_memory"]
+            if self._context.get("num_objects"):
+                diagnostic_info["num_objects"] = self._context["num_objects"]
+
+            self._init_enhanced_error(
+                remediation=error_info.remediation,
+                doc_link=error_info.doc_link,
+                diagnostic_info=diagnostic_info,
+                error_code="OBJECT_STORE_FULL",
+            )
+        else:
+            self._init_enhanced_error()
+
     def __str__(self):
-        return super(ObjectStoreFullError, self).__str__() + (
-            "\n"
-            "The local object store is full of objects that are still in "
-            "scope and cannot be evicted. Tip: Use the `ray memory` command "
-            "to list active objects in the cluster."
+        base_message = (
+            super(ObjectStoreFullError, self).__str__()
+            + "\n"
+            + "The local object store is full of objects that are still in "
+            "scope and cannot be evicted."
         )
+        return self._format_enhanced_message(base_message)
 
 
 @PublicAPI
-class OutOfDiskError(RayError):
+class OutOfDiskError(RayError, EnhancedErrorMixin):
     """Indicates that the local disk is full.
 
     This is raised if the attempt to store the object fails
     because both the object store and disk are full.
     """
 
+    def __init__(self, *args, context: Optional[Dict[str, Any]] = None):
+        super().__init__(*args)
+        self._context = context or {}
+
+        # Get remediation info from catalog
+        error_info = get_error_info("OUT_OF_DISK")
+        if error_info:
+            # Build diagnostic info from context
+            diagnostic_info = {}
+            if self._context.get("disk_usage"):
+                diagnostic_info["disk_usage"] = self._context["disk_usage"]
+            if self._context.get("spill_directory"):
+                diagnostic_info["spill_directory"] = self._context["spill_directory"]
+
+            self._init_enhanced_error(
+                remediation=error_info.remediation,
+                doc_link=error_info.doc_link,
+                diagnostic_info=diagnostic_info,
+                error_code="OUT_OF_DISK",
+            )
+        else:
+            self._init_enhanced_error()
+
     def __str__(self):
-        # TODO(scv119): expose more disk usage information and link to a doc.
-        return super(OutOfDiskError, self).__str__() + (
-            "\n"
-            "The object cannot be created because the local object store"
+        base_message = (
+            super(OutOfDiskError, self).__str__()
+            + "\n"
+            + "The object cannot be created because the local object store"
             " is full and the local disk's utilization is over capacity"
             " (95% by default)."
-            "Tip: Use `df` on this node to check disk usage and "
-            "`ray memory` to check object store memory usage."
         )
+        return self._format_enhanced_message(base_message)
 
 
 @PublicAPI
-class OutOfMemoryError(RayError):
+class OutOfMemoryError(RayError, EnhancedErrorMixin):
     """Indicates that the node is running out of memory and is close to full.
 
     This is raised if the node is low on memory and tasks or actors are being
@@ -533,11 +706,35 @@ class OutOfMemoryError(RayError):
     """
 
     # TODO: (clarng) expose the error message string here and format it with proto
-    def __init__(self, message):
+    def __init__(self, message, context: Optional[Dict[str, Any]] = None):
         self.message = message
+        self._context = context or {}
+
+        # Get remediation info from catalog
+        error_info = get_error_info("OUT_OF_MEMORY")
+        if error_info:
+            # Build diagnostic info from context
+            diagnostic_info = {}
+            if self._context.get("used_memory"):
+                diagnostic_info["used_memory"] = self._context["used_memory"]
+            if self._context.get("total_memory"):
+                diagnostic_info["total_memory"] = self._context["total_memory"]
+            if self._context.get("threshold"):
+                diagnostic_info["threshold"] = self._context["threshold"]
+            if self._context.get("node_id"):
+                diagnostic_info["node_id"] = self._context["node_id"]
+
+            self._init_enhanced_error(
+                remediation=error_info.remediation,
+                doc_link=error_info.doc_link,
+                diagnostic_info=diagnostic_info,
+                error_code="OUT_OF_MEMORY",
+            )
+        else:
+            self._init_enhanced_error()
 
     def __str__(self):
-        return self.message
+        return self._format_enhanced_message(self.message)
 
 
 @PublicAPI
@@ -790,7 +987,7 @@ class AsyncioActorExit(RayError):
 
 
 @PublicAPI
-class RuntimeEnvSetupError(RayError):
+class RuntimeEnvSetupError(RayError, EnhancedErrorMixin):
     """Raised when a runtime environment fails to be set up.
 
     Args:
@@ -798,14 +995,36 @@ class RuntimeEnvSetupError(RayError):
             why runtime env setup has failed.
     """
 
-    def __init__(self, error_message: str = None):
+    def __init__(
+        self, error_message: str = None, context: Optional[Dict[str, Any]] = None
+    ):
         self.error_message = error_message
+        self._context = context or {}
+
+        # Get remediation info from catalog
+        error_info = get_error_info("RUNTIME_ENV_SETUP_ERROR")
+        if error_info:
+            diagnostic_info = {}
+            if self._context.get("runtime_env"):
+                diagnostic_info["runtime_env"] = self._context["runtime_env"]
+            if self._context.get("worker_id"):
+                diagnostic_info["worker_id"] = self._context["worker_id"]
+
+            self._init_enhanced_error(
+                remediation=error_info.remediation,
+                doc_link=error_info.doc_link,
+                diagnostic_info=diagnostic_info,
+                error_code="RUNTIME_ENV_SETUP_ERROR",
+            )
+        else:
+            self._init_enhanced_error()
 
     def __str__(self):
         msgs = ["Failed to set up runtime environment."]
         if self.error_message:
             msgs.append(self.error_message)
-        return "\n".join(msgs)
+        base_message = "\n".join(msgs)
+        return self._format_enhanced_message(base_message)
 
 
 @PublicAPI
@@ -836,33 +1055,73 @@ class PendingCallsLimitExceeded(RayError):
 
 
 @PublicAPI
-class TaskUnschedulableError(RayError):
+class TaskUnschedulableError(RayError, EnhancedErrorMixin):
     """Raised when the task cannot be scheduled.
 
     One example is that the node specified through
     NodeAffinitySchedulingStrategy is dead.
     """
 
-    def __init__(self, error_message: str):
+    def __init__(self, error_message: str, context: Optional[Dict[str, Any]] = None):
         self.error_message = error_message
+        self._context = context or {}
+
+        # Get remediation info from catalog
+        error_info = get_error_info("TASK_UNSCHEDULABLE")
+        if error_info:
+            diagnostic_info = {}
+            if self._context.get("task_name"):
+                diagnostic_info["task_name"] = self._context["task_name"]
+            if self._context.get("required_resources"):
+                diagnostic_info["required_resources"] = self._context["required_resources"]
+
+            self._init_enhanced_error(
+                remediation=error_info.remediation,
+                doc_link=error_info.doc_link,
+                diagnostic_info=diagnostic_info,
+                error_code="TASK_UNSCHEDULABLE",
+            )
+        else:
+            self._init_enhanced_error()
 
     def __str__(self):
-        return f"The task is not schedulable: {self.error_message}"
+        base_message = f"The task is not schedulable: {self.error_message}"
+        return self._format_enhanced_message(base_message)
 
 
 @PublicAPI
-class ActorUnschedulableError(RayError):
+class ActorUnschedulableError(RayError, EnhancedErrorMixin):
     """Raised when the actor cannot be scheduled.
 
     One example is that the node specified through
     NodeAffinitySchedulingStrategy is dead.
     """
 
-    def __init__(self, error_message: str):
+    def __init__(self, error_message: str, context: Optional[Dict[str, Any]] = None):
         self.error_message = error_message
+        self._context = context or {}
+
+        # Get remediation info from catalog
+        error_info = get_error_info("ACTOR_UNSCHEDULABLE")
+        if error_info:
+            diagnostic_info = {}
+            if self._context.get("actor_name"):
+                diagnostic_info["actor_name"] = self._context["actor_name"]
+            if self._context.get("required_resources"):
+                diagnostic_info["required_resources"] = self._context["required_resources"]
+
+            self._init_enhanced_error(
+                remediation=error_info.remediation,
+                doc_link=error_info.doc_link,
+                diagnostic_info=diagnostic_info,
+                error_code="ACTOR_UNSCHEDULABLE",
+            )
+        else:
+            self._init_enhanced_error()
 
     def __str__(self):
-        return f"The actor is not schedulable: {self.error_message}"
+        base_message = f"The actor is not schedulable: {self.error_message}"
+        return self._format_enhanced_message(base_message)
 
 
 @DeveloperAPI
